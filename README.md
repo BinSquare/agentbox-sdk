@@ -36,9 +36,36 @@ await sandbox.delete();
 Providers are mix-and-match:
 
 - **Agents** — [`claude-code`](./src/agents/providers/claude-code.ts), [`opencode`](./src/agents/providers/opencode.ts), [`codex`](./src/agents/providers/codex.ts)
-- **Sandboxes** — [`local-docker`](./src/sandboxes/providers/local-docker.ts), [`e2b`](./src/sandboxes/providers/e2b.ts), [`modal`](./src/sandboxes/providers/modal.ts), [`daytona`](./src/sandboxes/providers/daytona.ts), [`vercel`](./src/sandboxes/providers/vercel.ts)
+- **Sandboxes** — [`local-docker`](./src/sandboxes/providers/local-docker.ts), [`smol`](./src/sandboxes/providers/smol.ts), [`e2b`](./src/sandboxes/providers/e2b.ts), [`modal`](./src/sandboxes/providers/modal.ts), [`daytona`](./src/sandboxes/providers/daytona.ts), [`vercel`](./src/sandboxes/providers/vercel.ts)
 
 Swap either one and your app code stays the same.
+
+### Local microVM sandbox
+
+Use `smol` to run the same coding agents in a local microVM. Install the `smolmachines` SDK prerequisites, then supply an OCI image containing your agent CLI, git, and the tools it needs. The Smol adapter exposes the agent servers on local forwarded ports and supports command streaming, file transfer, and reattaching to tagged machines. It currently targets local machines; Smol Cloud's create API waits for declared ports to become ready before AgentBox can start its agent server.
+
+```ts
+import { Agent, Sandbox } from "agentbox-sdk";
+
+const sandbox = new Sandbox("smol", {
+  image: process.env.AGENT_IMAGE!,
+  workingDir: "/workspace",
+  tags: { project: "my-agent" },
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+  provider: { allowHosts: ["api.anthropic.com", "registry.npmjs.org"] },
+});
+await sandbox.findOrProvision();
+try {
+  const agent = new Agent("claude-code", { sandbox, cwd: "/workspace" });
+  await agent.setup();
+  const run = agent.stream({ input: "Inspect this repository" });
+  for await (const event of run) console.log(event);
+} finally {
+  await sandbox.delete();
+}
+```
+
+Smol keeps local machines for warm reattachment; always call `sandbox.delete()` when finished. Guest outbound networking defaults to enabled, and `provider.allowHosts` restricts it; include the agent API and any package or registry hosts your image needs. Build your image with your usual OCI tool and push it to a registry Smol can pull from; AgentBox's image builder does not yet build Smol images. Run the real VM contract test with `AGENTBOX_RUN_SMOL_E2E=1 npx vitest run test/smol-live.e2e.test.ts`.
 
 ## Install
 
