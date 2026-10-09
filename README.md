@@ -65,7 +65,7 @@ try {
 }
 ```
 
-Smol keeps local machines for warm reattachment; always call `sandbox.delete()` when finished. Guest outbound networking defaults to enabled, and `provider.allowHosts` restricts it; include the agent API and any package or registry hosts your image needs. Build your image with your usual OCI tool and push it to a registry Smol can pull from; AgentBox's image builder does not yet build Smol images. Run the real VM contract test with `AGENTBOX_RUN_SMOL_E2E=1 npx vitest run test/smol-live.e2e.test.ts`.
+Smol keeps local machines for warm reattachment when you provide unique tags for your agent and keep its image, credentials, ports, and network policy unchanged; an untagged request creates a fresh machine. Always call `sandbox.delete()` when finished. Guest outbound networking defaults to enabled, and `provider.allowHosts` restricts it; include the agent API and any package or registry hosts your image needs. Build your image with your usual OCI tool and push it to a registry Smol can pull from; AgentBox's image builder does not yet build Smol images. Run the real VM contract test with `AGENTBOX_RUN_SMOL_E2E=1 npx vitest run test/smol-live.e2e.test.ts`.
 
 ## Install
 

@@ -6,6 +6,35 @@ const live =
   process.env.AGENTBOX_RUN_SMOL_E2E === "1" ? describe : describe.skip;
 
 live("Smol local microVM provider", () => {
+  it("does not reuse a tagged VM with a different network policy", async () => {
+    const tags = { "agentbox.test": randomUUID() };
+    const first = new Sandbox("smol", {
+      image: "node:24-alpine",
+      tags,
+      provider: { network: true },
+    });
+    const second = new Sandbox("smol", {
+      image: "node:24-alpine",
+      tags,
+      provider: { network: false },
+    });
+    const untagged = new Sandbox("smol", { image: "node:24-alpine" });
+    try {
+      await first.findOrProvision();
+      await second.findOrProvision();
+      expect(second.isWarm).toBe(false);
+      expect(second.id).not.toBe(first.id);
+      await untagged.findOrProvision();
+      expect(untagged.isWarm).toBe(false);
+      expect(untagged.id).not.toBe(first.id);
+      expect(untagged.id).not.toBe(second.id);
+    } finally {
+      await untagged.delete().catch(() => undefined);
+      await second.delete().catch(() => undefined);
+      await first.delete().catch(() => undefined);
+    }
+  }, 120_000);
+
   it("reattaches, streams commands, transfers files and exposes an agent port", async () => {
     const tags = { "agentbox.test": randomUUID() };
     const options = {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { posix } from "node:path";
 import { Machine, type MachineSummary } from "smolmachines";
@@ -79,17 +79,26 @@ export class SmolSandboxAdapter extends SandboxAdapter<
         "Smol requires options.image with the agent CLI installed.",
       );
     }
-    const existing = (await this.ownedMachines(this.options.tags))[0];
-    if (existing) {
-      this.machine = await Machine.connect(existing.id, connection);
-      this.isWarmFlag = true;
-      return;
-    }
     const ports = new Set([
       ...collectAllAgentReservedPorts(),
       ...(this.options.provider?.publishedPorts ?? []),
       ...this.declaredPorts,
     ]);
+    const configLabel = this.configLabel(ports);
+    // Without an explicit identity, a process must never attach to an
+    // unrelated agent's VM. A matching tag alone does not prove that the
+    // image, credentials, ports, or network policy are still the same.
+    if (Object.keys(this.options.tags ?? {}).length > 0) {
+      const existing = (await this.ownedMachines({
+        ...this.options.tags,
+        ...configLabel,
+      }))[0];
+      if (existing) {
+        this.machine = await Machine.connect(existing.id, connection);
+        this.isWarmFlag = true;
+        return;
+      }
+    }
     const mappings = [];
     const allocated = new Set<number>();
     for (const guest of ports) {
@@ -107,7 +116,7 @@ export class SmolSandboxAdapter extends SandboxAdapter<
       {
         name: `agentbox-${randomUUID()}`,
         image: this.options.image,
-        labels: { ...this.options.tags, ...ownerLabel },
+        labels: { ...this.options.tags, ...ownerLabel, ...configLabel },
         env: this.getMergedEnv(),
         workdir: this.workingDir,
         detach: true,
@@ -127,6 +136,29 @@ export class SmolSandboxAdapter extends SandboxAdapter<
       },
       connection,
     );
+  }
+
+  private configLabel(ports: Set<number>): Record<string, string> {
+    const config = {
+      image: this.options.image,
+      workdir: this.workingDir,
+      env: Object.entries(this.getMergedEnv()).sort(([a], [b]) =>
+        a < b ? -1 : a > b ? 1 : 0,
+      ),
+      ports: [...ports].sort((a, b) => a - b),
+      resources: {
+        cpus: this.options.resources?.cpu ?? null,
+        memoryMb: this.options.resources?.memoryMiB ?? null,
+      },
+      policy: this.options.provider?.allowHosts
+        ? { allowHosts: [...new Set(this.options.provider.allowHosts)].sort() }
+        : { network: this.options.provider?.network ?? true },
+    };
+    return {
+      "agentbox.config": createHash("sha256")
+        .update(JSON.stringify(config))
+        .digest("hex"),
+    };
   }
 
   private async ownedMachines(
