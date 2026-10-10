@@ -82,9 +82,9 @@ await sandbox.findOrProvision();
 // Use the same Agent setup and run calls as the local example above.
 ```
 
-AgentBox setup also needs Bash, curl, Python 3, and git in the VM image. For OpenCode, [`examples/smol-cloud-opencode/Dockerfile`](./examples/smol-cloud-opencode/Dockerfile) adds these to its official image. Build and push it to your own registry, then set `AGENT_IMAGE` to the resulting reference before using `new Agent("open-code", { sandbox, cwd: "/workspace" })`.
+AgentBox setup also needs Bash, curl, Python 3, and git in the VM image. For OpenCode, [`examples/smol-cloud-opencode/Dockerfile`](./examples/smol-cloud-opencode/Dockerfile) adds these to its official image. The recipe pins OpenCode 1.18.35: the tested 2.0.7 image returns HTTP 405 from AgentBox's `POST /session` call. Build and push it to your own registry, then set `AGENT_IMAGE` to the resulting reference before using `new Agent("open-code", { sandbox, cwd: "/workspace" })`.
 
-Run the Cloud transport test with `AGENTBOX_RUN_SMOL_CLOUD_E2E=1 npx vitest run test/smol-cloud-live.e2e.test.ts`, or verify a real OpenCode server with `AGENTBOX_RUN_SMOL_CLOUD_AGENT_E2E=1 npx vitest run test/smol-cloud-agent-live.e2e.test.ts`; both need a Cloud key. The agent test installs image prerequisites in its test VM so it can exercise the upstream image directly. Always call `sandbox.delete()` when finished.
+Run the Cloud transport test with `AGENTBOX_RUN_SMOL_CLOUD_E2E=1 npx vitest run test/smol-cloud-live.e2e.test.ts`, or verify a real OpenCode server with `AGENTBOX_RUN_SMOL_CLOUD_AGENT_E2E=1 npx vitest run test/smol-cloud-agent-live.e2e.test.ts`; both need a Cloud key. The agent test installs image prerequisites in its test VM so it can exercise the upstream image directly. For a complete prompt through a guest-local model stub, use `AGENTBOX_RUN_SMOL_CLOUD_PROMPT_E2E=1 npx vitest run test/smol-cloud-prompt-live.e2e.test.ts`. Always call `sandbox.delete()` when finished.
 
 ## Install
 

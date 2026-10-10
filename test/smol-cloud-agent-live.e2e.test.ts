@@ -8,7 +8,7 @@ const live = process.env.AGENTBOX_RUN_SMOL_CLOUD_AGENT_E2E === "1" ? describe : 
 live("OpenCode server in a Smol Cloud VM", () => {
   it("sets up, authenticates, stops and restarts a real agent server", async () => {
     const sandbox = new Sandbox("smol", {
-      image: process.env.AGENTBOX_SMOL_OPENCODE_IMAGE ?? "ghcr.io/anomalyco/opencode:2.0.7",
+      image: process.env.AGENTBOX_SMOL_OPENCODE_IMAGE ?? "ghcr.io/anomalyco/opencode:1.18.35",
       tags: { "agentbox.test": randomUUID() },
       workingDir: "/workspace",
       provider: { target: "cloud", network: true },
