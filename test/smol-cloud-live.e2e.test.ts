@@ -79,6 +79,28 @@ server.listen(${port}, "0.0.0.0");`;
       expect(restarted.isWarm).toBe(true);
       expect(restarted.id).toBe(sandbox.id);
       expect((await restarted.run("test -f /workspace/agent-server.js")).exitCode).toBe(0);
+      expect((await restarted.run(
+        "nohup node /workspace/agent-server.js >/workspace/agent-server.log 2>&1 </dev/null &",
+      )).exitCode).toBe(0);
+      // The first sandbox still owns this preview listener. Each new client
+      // connection must establish a fresh Cloud tunnel after another adapter
+      // stopped and restarted the underlying VM.
+      let recovered: Response | undefined;
+      for (let i = 0; i < 40; i++) {
+        try {
+          recovered = await fetch(`${url}/after-restart`, {
+            headers: { authorization },
+            signal: AbortSignal.timeout(2_000),
+          });
+          if (recovered.ok) break;
+        } catch { /* The guest listener may still be starting. */ }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      expect(await recovered?.text()).toBe(`${authorization} /after-restart`);
+      await sandbox.delete();
+      await expect(fetch(`${url}/after-delete`, {
+        signal: AbortSignal.timeout(2_000),
+      })).rejects.toThrow();
     } finally {
       await sandbox.delete().catch(() => undefined);
     }

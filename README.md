@@ -418,7 +418,7 @@ Six sandbox providers are supported. Each gives you an isolated environment with
 | Provider       | What it is             | Auth                                                    |
 | -------------- | ---------------------- | ------------------------------------------------------- |
 | `local-docker` | Local Docker container | Docker daemon                                           |
-| `smol`         | Local microVM           | No key                                                  |
+| `smol`         | Local or Cloud microVM | Local: no key; Cloud: `SMOL_CLOUD_TOKEN` or CLI login   |
 | `e2b`          | Cloud micro-VM         | `E2B_API_KEY`                                           |
 | `modal`        | Cloud container        | `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET`                 |
 | `daytona`      | Cloud dev environment  | `DAYTONA_API_KEY`                                       |
