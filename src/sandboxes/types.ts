@@ -87,8 +87,12 @@ export interface LocalDockerProviderOptions {
 }
 
 export interface SmolProviderOptions {
-  /** Local-only; Smol Cloud waits for published ports before returning from create. */
-  target?: "local";
+  /** Use local VMs by default, or Cloud VMs with the Smol SDK deferred-port feature. */
+  target?: "local" | "cloud";
+  /** Cloud API key, or use SMOL_CLOUD_TOKEN / your smol CLI login. */
+  apiKey?: string;
+  /** Optional Cloud API endpoint. */
+  baseUrl?: string;
   /** Enable unrestricted outbound access (default: true), or set allowHosts. */
   network?: boolean;
   /** Restrict guest egress to these hostnames (takes precedence over network). */

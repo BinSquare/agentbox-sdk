@@ -42,7 +42,7 @@ Swap either one and your app code stays the same.
 
 ### Local microVM sandbox
 
-Use `smol` to run the same coding agents in a local microVM. Install the `smolmachines` SDK prerequisites, then supply an OCI image containing your agent CLI, git, and the tools it needs. The Smol adapter exposes the agent servers on local forwarded ports and supports command streaming, file transfer, and reattaching to tagged machines. It currently targets local machines; Smol Cloud's create API waits for declared ports to become ready before AgentBox can start its agent server.
+Use `smol` to run the same coding agents in a local microVM. Install the `smolmachines` SDK prerequisites, then supply an OCI image containing your agent CLI, git, and the tools it needs. The Smol adapter exposes the agent servers on local forwarded ports and supports command streaming, file transfer, and reattaching to tagged machines. Select a local VM by default or use the Smol Cloud option below.
 
 ```ts
 import { Agent, Sandbox } from "agentbox-sdk";
@@ -66,6 +66,23 @@ try {
 ```
 
 Smol keeps local machines for warm reattachment when you provide unique tags for your agent and keep its image, credentials, ports, and network policy unchanged; an untagged request creates a fresh machine. Always call `sandbox.delete()` when finished. Guest outbound networking defaults to enabled, and `provider.allowHosts` restricts it; include the agent API and any package or registry hosts your image needs. Build your image with your usual OCI tool and push it to a registry Smol can pull from; AgentBox's image builder does not yet build Smol images. Run the real VM contract test with `AGENTBOX_RUN_SMOL_E2E=1 npx vitest run test/smol-live.e2e.test.ts`. Run a complete OpenCode prompt against a guest-local model stub with `AGENTBOX_RUN_SMOL_LOCAL_PROMPT_E2E=1 npx vitest run test/smol-local-prompt-live.e2e.test.ts`. Reattaching to a paused VM requires the pending Smol SDK paused-reconnect change (smol#263); until that change is published, this case remains opt-in with `AGENTBOX_RUN_SMOL_PAUSED_E2E=1` alongside the live test flag.
+
+### Smol Cloud
+
+To run the same agent in Smol Cloud, set `provider.target` to `"cloud"` and provide a Cloud key through `SMOL_CLOUD_TOKEN`, a CLI login, or `provider.apiKey`. Cloud VM creation with an agent server requires the deferred-port support pending in `smol-machines/smol#274`. The provider starts the VM before agent ports listen, then forwards its published ports over authenticated Cloud TCP tunnels bound to localhost. This preserves the agent server's own HTTP and WebSocket authorization headers; preview links are usable on this host only.
+
+```ts
+const sandbox = new Sandbox("smol", {
+  image: process.env.AGENT_IMAGE!,
+  tags: { project: "my-cloud-agent" },
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+  provider: { target: "cloud", allowHosts: ["api.anthropic.com"] },
+});
+await sandbox.findOrProvision();
+// Use the same Agent setup and run calls as the local example above.
+```
+
+Run the live Cloud contract test with `AGENTBOX_RUN_SMOL_CLOUD_E2E=1 npx vitest run test/smol-cloud-live.e2e.test.ts` after supplying a Cloud key. Always call `sandbox.delete()` when finished.
 
 ## Install
 

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { posix } from "node:path";
-import { Machine, type MachineSummary } from "smolmachines";
+import { Machine, type ConnectOptions, type MachineSummary } from "smolmachines";
 
 import { SandboxAdapter } from "../base";
 import {
@@ -18,13 +18,9 @@ import { collectAllAgentReservedPorts } from "../../agents/ports";
 import { AsyncQueue } from "../../shared/async-queue";
 import { suppressUnhandledRejection } from "../../shared/errors";
 import { toShellCommand } from "../../shared/shell";
+import { openCloudForward, type CloudForward } from "./smol-cloud-forward";
 
 export type SmolRaw = { machine?: Machine };
-const connection = {
-  target: "local",
-  handleSignals: false,
-  waitForPorts: false,
-} as const;
 const ownerLabel = { "agentbox.provider": "smol" };
 
 // Smol requires explicit host ports; zero does not allocate an ephemeral one.
@@ -49,6 +45,24 @@ export class SmolSandboxAdapter extends SandboxAdapter<
 > {
   private machine?: Machine;
   private readonly declaredPorts = new Set<number>();
+  private readonly cloudForwards = new Map<number, Promise<CloudForward>>();
+  private publishedPorts = new Set<number>();
+
+  private get isCloud(): boolean {
+    return this.options.provider?.target === "cloud";
+  }
+
+  private get connection(): ConnectOptions {
+    if (this.isCloud) {
+      return {
+        target: "cloud",
+        waitForPorts: false,
+        ...(this.options.provider?.apiKey ? { apiKey: this.options.provider.apiKey } : {}),
+        ...(this.options.provider?.baseUrl ? { baseUrl: this.options.provider.baseUrl } : {}),
+      };
+    }
+    return { target: "local", handleSignals: false, waitForPorts: false };
+  }
 
   get provider(): "smol" {
     return SandboxProvider.Smol;
@@ -57,21 +71,13 @@ export class SmolSandboxAdapter extends SandboxAdapter<
     return { machine: this.machine };
   }
   get id(): string | undefined {
-    return this.machine?.name;
+    return this.machine && (this.isCloud ? this.machine.id : this.machine.name);
   }
 
   protected async provision(): Promise<void> {
-    if (
-      this.options.provider?.target &&
-      this.options.provider.target !== "local"
-    ) {
+    if (this.options.idleTimeoutMs !== undefined || this.options.autoStopMs !== undefined) {
       throw new Error(
-        "AgentBox's Smol provider currently supports local machines only.",
-      );
-    }
-    if (this.options.idleTimeoutMs || this.options.autoStopMs) {
-      throw new Error(
-        "Smol local machines do not support idleTimeoutMs or autoStopMs.",
+        "Smol sandboxes do not support idleTimeoutMs or autoStopMs.",
       );
     }
     if (!this.options.image) {
@@ -85,6 +91,7 @@ export class SmolSandboxAdapter extends SandboxAdapter<
       ...this.declaredPorts,
     ]);
     const configLabel = this.configLabel(ports);
+    const connection = this.connection;
     // Without an explicit identity, a process must never attach to an
     // unrelated agent's VM. A matching tag alone does not prove that the
     // image, credentials, ports, or network policy are still the same.
@@ -94,14 +101,27 @@ export class SmolSandboxAdapter extends SandboxAdapter<
         ...configLabel,
       })).find((candidate) => candidate.state !== "frozen");
       if (existing) {
-        const machine = await Machine.connect(existing.id, connection);
+        // Cloud attach waits for agent readiness only on a running VM; a
+        // stopped or paused VM needs start/resume first.
+        const machine = await Machine.connect(
+          existing.id,
+          this.isCloud && existing.state !== "started" && existing.state !== "running"
+            ? { ...connection, waitForPorts: undefined }
+            : connection,
+        );
         // Reconnecting a paused VM preserves its saved execution. It must be
         // resumed before agent setup or commands can use it; published agent
         // ports may not be listening until AgentBox starts the server.
         if (existing.state === "paused") {
           await machine.resume({ waitUntilReady: false });
+        } else if (this.isCloud && existing.state === "stopped") {
+          await machine.start({ waitUntilReady: false });
+        }
+        if (this.isCloud && (existing.state === "paused" || existing.state === "stopped")) {
+          await this.waitForCloudAgent(machine);
         }
         this.machine = machine;
+        this.publishedPorts = ports;
         this.isWarmFlag = true;
         return;
       }
@@ -112,10 +132,14 @@ export class SmolSandboxAdapter extends SandboxAdapter<
       if (!Number.isInteger(guest) || guest < 1 || guest > 65535) {
         throw new Error(`Invalid Smol guest port: ${guest}`);
       }
-      let host = await freePort();
-      while (allocated.has(host)) host = await freePort();
-      allocated.add(host);
-      mappings.push({ host, guest });
+      if (this.isCloud) {
+        mappings.push({ guest, host: 0 });
+      } else {
+        let host = await freePort();
+        while (allocated.has(host)) host = await freePort();
+        allocated.add(host);
+        mappings.push({ host, guest });
+      }
     }
     // Each machine must survive the process that created it for tagged warm reattach.
     // Smol's default local lifetime would otherwise reap the VM on host exit.
@@ -126,7 +150,7 @@ export class SmolSandboxAdapter extends SandboxAdapter<
         labels: { ...this.options.tags, ...ownerLabel, ...configLabel },
         env: this.getMergedEnv(),
         workdir: this.workingDir,
-        detach: true,
+        ...(!this.isCloud ? { detach: true } : {}),
         waitForPorts: false,
         ports: mappings,
         resources: {
@@ -143,6 +167,20 @@ export class SmolSandboxAdapter extends SandboxAdapter<
       },
       connection,
     );
+    this.publishedPorts = ports;
+  }
+
+  private async waitForCloudAgent(machine: Machine): Promise<void> {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      try {
+        if ((await machine.exec(["/bin/sh", "-c", "true"], { timeout: 5 })).exitCode === 0) return;
+      } catch {
+        // The guest agent may still be starting after a Cloud resume or start.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    throw new Error(`Smol Cloud machine ${machine.id} did not start its guest agent.`);
   }
 
   private configLabel(ports: Set<number>): Record<string, string> {
@@ -171,7 +209,7 @@ export class SmolSandboxAdapter extends SandboxAdapter<
   private async ownedMachines(
     tags?: Record<string, string>,
   ): Promise<MachineSummary[]> {
-    return Machine.list(connection, { labels: { ...tags, ...ownerLabel } });
+    return Machine.list(this.connection, { labels: { ...tags, ...ownerLabel } });
   }
 
   async list(options?: SandboxListOptions): Promise<SandboxDescriptor[]> {
@@ -280,15 +318,25 @@ export class SmolSandboxAdapter extends SandboxAdapter<
     this.requireProvisioned();
     return null;
   }
+  private async closeCloudForwards(): Promise<void> {
+    const forwards = [...this.cloudForwards.values()];
+    this.cloudForwards.clear();
+    await Promise.all(forwards.map(async (pending) => {
+      const forward = await pending.catch(() => undefined);
+      if (forward) await forward.close();
+    }));
+  }
   async stop(): Promise<void> {
+    await this.closeCloudForwards();
     if (this.machine) await this.machine.stop();
   }
   async delete(): Promise<void> {
+    await this.closeCloudForwards();
     if (this.machine) await this.machine.delete();
     this.machine = undefined;
   }
   async openPort(port: number): Promise<void> {
-    if (this.machine && !this.machine.endpoint(port).httpUrl) {
+    if (this.machine && !this.publishedPorts.has(port)) {
       throw new Error(
         `Smol port ${port} must be opened before findOrProvision().`,
       );
@@ -296,7 +344,18 @@ export class SmolSandboxAdapter extends SandboxAdapter<
     this.declaredPorts.add(port);
   }
   async getPreviewLink(port: number): Promise<string> {
-    return this.readyMachine.endpoint(port).httpUrl;
+    const machine = this.readyMachine;
+    if (!this.isCloud) return machine.endpoint(port).httpUrl;
+    if (!this.publishedPorts.has(port)) {
+      throw new Error(`Smol port ${port} must be opened before findOrProvision().`);
+    }
+    let pending = this.cloudForwards.get(port);
+    if (!pending) {
+      pending = openCloudForward(machine, port);
+      this.cloudForwards.set(port, pending);
+      void pending.catch(() => { this.cloudForwards.delete(port); });
+    }
+    return (await pending).url;
   }
   get previewHeaders(): Record<string, string> {
     return {};
