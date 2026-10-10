@@ -92,9 +92,16 @@ export class SmolSandboxAdapter extends SandboxAdapter<
       const existing = (await this.ownedMachines({
         ...this.options.tags,
         ...configLabel,
-      }))[0];
+      })).find((candidate) => candidate.state !== "frozen");
       if (existing) {
-        this.machine = await Machine.connect(existing.id, connection);
+        const machine = await Machine.connect(existing.id, connection);
+        // Reconnecting a paused VM preserves its saved execution. It must be
+        // resumed before agent setup or commands can use it; published agent
+        // ports may not be listening until AgentBox starts the server.
+        if (existing.state === "paused") {
+          await machine.resume({ waitUntilReady: false });
+        }
+        this.machine = machine;
         this.isWarmFlag = true;
         return;
       }

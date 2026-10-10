@@ -4,6 +4,9 @@ import { Sandbox } from "../src/sandboxes/Sandbox";
 
 const live =
   process.env.AGENTBOX_RUN_SMOL_E2E === "1" ? describe : describe.skip;
+// Paused reconnect needs the Smol SDK change pending in smol#263.
+const pausedLive =
+  process.env.AGENTBOX_RUN_SMOL_PAUSED_E2E === "1" ? it : it.skip;
 
 live("Smol local microVM provider", () => {
   it("does not reuse a tagged VM with a different network policy", async () => {
@@ -31,6 +34,28 @@ live("Smol local microVM provider", () => {
     } finally {
       await untagged.delete().catch(() => undefined);
       await second.delete().catch(() => undefined);
+      await first.delete().catch(() => undefined);
+    }
+  }, 120_000);
+
+  pausedLive("resumes a tagged VM that was paused before warm reattachment", async () => {
+    const tags = { "agentbox.test": randomUUID() };
+    const options = { image: "node:24-alpine", tags };
+    const first = new Sandbox("smol", options);
+    try {
+      await first.findOrProvision();
+      expect((await first.run("printf saved >/workspace/marker")).exitCode).toBe(0);
+      const machine = first.raw?.machine;
+      expect(machine).toBeDefined();
+      await machine!.pause();
+      expect((await first.list({ tags })).find((m) => m.id === first.id)?.state).toBe("paused");
+
+      const second = new Sandbox("smol", options);
+      await second.findOrProvision();
+      expect(second.isWarm).toBe(true);
+      expect(second.id).toBe(first.id);
+      expect((await second.run("cat /workspace/marker")).stdout).toBe("saved");
+    } finally {
       await first.delete().catch(() => undefined);
     }
   }, 120_000);
