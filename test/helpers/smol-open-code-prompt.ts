@@ -4,12 +4,12 @@ import { Agent } from "../../src/agents/Agent";
 import { Sandbox } from "../../src/sandboxes/Sandbox";
 
 /** Full agent prompt without external model credentials or usage charges. */
-export async function verifySmolOpenCodePrompt(): Promise<void> {
+export async function verifySmolOpenCodePrompt(target: "local" | "cloud" = "local"): Promise<void> {
   const sandbox = new Sandbox("smol", {
     image: "ghcr.io/anomalyco/opencode:1.18.35",
     workingDir: "/workspace",
     tags: { "agentbox.test": randomUUID() },
-    provider: { network: true },
+    provider: { target, network: true },
   });
   try {
     await sandbox.findOrProvision();
